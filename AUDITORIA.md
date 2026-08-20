@@ -36,7 +36,7 @@ Los problemas no estaban en lo que decía, sino en lo que faltaba.
    días sin hacerse. "Subir su prioridad" y "no castigar al usuario" son ambas reglas del
    documento y apuntan en direcciones opuestas.
 2. **No hay criterio de éxito.** Sin una métrica, "asistente inteligente" es una opinión y
-   ninguna versión puede declararse buena o mala. → Resuelto en §4.7.
+   ninguna versión puede declararse buena o mala. → Resuelto en §4.8.
 3. **Falta un "día en tu vida" real.** Un solo guion con horarios reales vale más para
    diseñar el motor que cuatro secciones de requisitos. Sigue pendiente.
 4. **Contradicción metodológica.** Pide no construir todo de una vez y a continuación
@@ -179,7 +179,49 @@ Costo estimado con uso realista: **menos de un dólar por usuario y mes**, domin
 importación de horarios. Las recomendaciones del día a día cuestan cero porque no usan
 LLM.
 
-### 4.7 Criterio de éxito
+### 4.7 Horario real: los bloques fechados sustituyen a los ciclos
+
+Se analizó una carta de horario mensual real (supermercado, operador de sala de venta,
+agosto de 2026). El hallazgo obliga a reescribir el modelo de tiempo por tercera vez, y
+esta vez **para simplificarlo**.
+
+Lo que muestra el documento:
+
+| Semana | Lun | Mar | Mié | Jue | Vie | Sáb | Dom |
+|---|---|---|---|---|---|---|---|
+| 10–16 ago | libre | libre | 9:00–16:00 | 9:00–16:00 | 9:00–16:00 | 9:00–16:00 | 11:30–19:30 |
+| 17–23 ago | 13:00–21:30 | libre | 13:00–21:30 | 13:00–21:30 | 13:00–21:30 | 13:00–21:30 | libre |
+| 24–30 ago | 9:00–16:00 | libre | 9:00–16:00 | 9:00–16:00 | 9:00–16:00 | libre | 11:30–16:00 |
+
+*(Lectura preliminar sujeta a confirmación: los totales por semana no cuadran con las 45
+horas que declara el contrato, así que probablemente falte interpretar una fila.)*
+
+**Conclusiones:**
+
+1. **No hay ciclo.** No es semana A/B ni 4x3: es una malla asignada mes a mes, con turnos
+   distintos cada semana y días libres irregulares. El propio documento advierte que
+   "podrá sufrir modificaciones… por situaciones del día a día". Un modelo de patrones
+   cíclicos, que es lo que asumían las dos versiones anteriores de la arquitectura, **no
+   representa esto**.
+2. **Los bloques fechados pasan a ser la representación canónica** (`time_blocks`). Los
+   patrones cíclicos siguen existiendo para las clases, pero como *generadores* de
+   bloques, no como algo que se resuelva en tiempo real.
+3. **Se eliminan dos tablas y una capa entera de lógica**: `schedule_exceptions` (editar
+   una excepción es ahora editar el bloque) y `events` (un evento es un bloque con otro
+   `kind`). Desaparecen también la ambigüedad de los turnos que cruzan medianoche y la
+   regla de "consultar también el día anterior".
+4. **La regla de la iglesia necesitaba este dato.** En dos de los tres domingos hay turno,
+   y ambos empiezan a las 11:30 — justo cuando terminaría un culto de 10:30. La condición
+   correcta no es "¿trabaja ese día?" sino "¿se solapa algún bloque con la ventana del
+   culto más el traslado?". Un modelo por día entero habría fallado en los dos casos.
+5. **La foto contiene datos personales** (nombre completo, RUT, local, nombre de la
+   jefatura). Confirma la política de borrar la imagen al confirmar la importación y de no
+   enviarla a ningún servicio que no sea el modelo de visión.
+
+Es el mejor argumento a favor de haber pedido material real antes de programar: el modelo
+que aguanta la realidad resultó ser **más simple** que el que la anticipaba.
+
+### 4.8 Criterio de éxito
 
 Métrica única, medible desde la primera semana:
 
@@ -208,10 +250,12 @@ Vale la pena registrarlo: son las decisiones que no tienen una respuesta obvia.
 
 ## 6. Lo que sigue pendiente de ti
 
-1. **Un día real tuyo, hora a hora**, incluyendo un día de turno y un domingo. Es el
-   insumo que falta para calibrar el motor con algo que no sea una suposición.
-2. **Confirmar la fusión de fe con hábitos** (§4.5).
-3. **Tres o cuatro fotos reales de horarios** de las que quieres importar. Antes de
-   diseñar la pantalla de confirmación conviene probar la visión con material real: es
-   una tarde de trabajo y dice si la función es viable tal como la imaginas.
-4. **Aprobar el orden de construcción** de `ARCHITECTURE.md` §16.
+1. **Confirmar la lectura de la carta de turnos** (§4.7): sobre todo si falta una fila por
+   día y a qué corresponde, porque las horas semanales no cuadran con las 45 del contrato.
+2. **Qué ocupa el resto de tu día**: estudios o clases con su horario, hora de dormir y de
+   levantarte, y cuánto tardas en llegar al trabajo. El turno es solo una parte; el motor
+   necesita saber qué queda alrededor.
+3. **Confirmar la fusión de fe con hábitos** (§4.5).
+4. **Una foto de un horario de clases**, si estudias. Es un formato distinto al de la
+   carta de turnos (rejilla repetible frente a malla fechada) y conviene probar los dos.
+5. **Aprobar el orden de construcción** de `ARCHITECTURE.md` §16.

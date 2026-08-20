@@ -3,10 +3,11 @@
 > **Documento de diseño, no de implementación.** Nada de esto está construido. Su objetivo
 > es que puedas revisarlo y aprobarlo antes de escribir código.
 >
-> Esta es la **versión 2**, corregida tras la auditoría registrada en
-> [`AUDITORIA.md`](./AUDITORIA.md). Quince errores de la versión 1 están corregidos aquí;
-> los más graves eran el modelo de recurrencia, la fórmula de los horarios rotativos y el
-> modelo de compartición. Léela junto a ese documento: allí está el *por qué*.
+> Esta es la **versión 3**, corregida tras la auditoría registrada en
+> [`AUDITORIA.md`](./AUDITORIA.md) y tras analizar una carta de horario real. Quince
+> errores de la versión 1 están corregidos aquí — los más graves, el modelo de recurrencia
+> y el de compartición — y el **modelo de tiempo (§7) está reescrito entero**: los
+> horarios reales no son cíclicos. Léela junto a ese documento: allí está el *por qué*.
 >
 > `DATABASE.md`, `AI.md`, `SECURITY.md` y `ROADMAP.md` se escribirán **después** de que
 > apruebes esto, para que no nazcan desactualizados.
@@ -70,7 +71,7 @@ Tomadas y cerradas. Cambiarlas más adelante cuesta, así que están aquí expl�
 | Tema | Decisión |
 |---|---|
 | Módulos | Tareas y horarios (núcleo, siempre activos) + **los cuatro**: hábitos y fe · finanzas y ahorros · aprendizaje · metas. Se construyen **en serie**, cada uno usado una semana real antes del siguiente |
-| Calendario | **Propio**. `events` incluye `external_source` y `external_id` desde el día 1 para importar Google Calendar en una fase posterior sin migrar datos |
+| Calendario | **Propio**. `time_blocks` incluye `source = 'external'` y `source_ref` desde el día 1 para importar Google Calendar en una fase posterior sin migrar datos |
 | Notificaciones | **Sí, contextuales**: antes de una clase o turno, y a la hora de un hábito. Con horario silencioso y tope diario. Ver §11 |
 | Espacio compartido | **Fuera del alcance.** Se conserva `user_id` uniforme en todas las tablas y el patrón de RLS documentado, que es lo único caro de añadir después |
 | Fe | Oración y lectura bíblica se modelan **como hábitos** con categoría `faith`; la iglesia es un evento con regla condicional. *Pendiente de tu confirmación* |
@@ -244,56 +245,94 @@ privilegios.
 ## 7. Modelo de tiempo
 
 El punto más delicado del producto. Si el cálculo del tiempo libre está mal, **todas** las
-recomendaciones están mal y el usuario no sabrá por qué. La versión 1 tenía aquí tres
-errores; esta es la corrección.
+recomendaciones están mal y el usuario no sabrá por qué.
 
-### 7.1 Ciclos medidos en días, no en semanas
+Esta sección se reescribió por tercera vez tras ver una **carta de horario real**: una
+malla mensual de supermercado, entregada mes a mes, con turnos distintos cada semana
+(9:00–16:00, 13:00–21:30, 11:30–19:30), días libres irregulares y una nota impresa que
+advierte que la planificación "podrá sufrir modificaciones… por situaciones del día a
+día".
+
+**La lección: gran parte de los horarios reales no tienen ciclo.** Un modelo basado en
+patrones cíclicos, que es lo que asumían las versiones anteriores, no representa una malla
+asignada mes a mes. Las clases universitarias sí se repiten; los turnos no.
+
+### 7.1 Los bloques fechados son la representación canónica
+
+Una sola tabla describe todo lo que ocupa tiempo, ya venga de un patrón, de una foto o de
+la mano del usuario:
 
 ```
-schedules
-  cycle_length_days   -- 14 = semana A/B · 7 = horario fijo · 5, 21… = turnos rotativos
-  anchor_date         -- día en que empieza el desplazamiento 0
-  valid_from / valid_to -- al cambiar de semestre o de trabajo no se pierde el histórico
-  kind, priority
-
-schedule_items
-  day_offset          -- 0 .. cycle_length_days-1
-  start_time          -- hora local
-  duration_minutes    -- NO end_time
-  kind                -- class | work | rest | sleep | commute
-  blocks_availability
+time_blocks
+  user_id
+  starts_at timestamptz     -- instante real, ya resuelto
+  ends_at   timestamptz     -- siempre posterior a starts_at
+  local_date date           -- día lógico al que pertenece (materializado)
+  kind          -- work | class | study | rest | sleep | commute | event | church
+  title, blocks_availability
+  source        -- manual | pattern | import | external
+  source_ref    -- patrón o importación de origen
+  is_detached   -- editado a mano: la regeneración no lo pisa
+  deleted_at
 ```
 
-Medir el ciclo **en días** es lo que permite representar turnos 4x3, 6x2 o 7x7, que no se
-alinean con la semana. Un horario semanal normal es `cycle_length_days = 7`: el mismo
-código, sin ramas especiales.
+Esto resuelve de golpe tres problemas que las versiones anteriores trataban por separado:
+
+- **Turnos que cruzan medianoche**: `ends_at` es simplemente posterior. Desaparece la
+  ambigüedad de `end_time < start_time` y la regla de "consultar también el día anterior".
+- **Cambio de hora**: la conversión de (fecha local, hora local) a instante se hace **una
+  vez**, al generar o importar, con la base de datos de zonas horarias. El motor de
+  disponibilidad solo compara instantes.
+- **Disponibilidad**: una consulta, un índice `(user_id, starts_at)`. Antes había que
+  resolver patrones, excepciones y eventos en memoria en cada carga.
+
+### 7.2 Tres generadores, un destino
+
+Los generadores **producen** bloques; nunca se consultan en tiempo real.
+
+**1. Patrones recurrentes** — para clases y rutinas que sí se repiten:
+
+```
+schedule_patterns(user_id, kind, cycle_length_days, anchor_date,
+                  valid_from, valid_to)
+schedule_pattern_items(pattern_id, day_offset, start_time,
+                       duration_minutes, kind, title)
+```
+
+Medir el ciclo **en días** permite representar tanto una semana fija
+(`cycle_length_days = 7`) como turnos 4x3 o 6x2, con el mismo código.
 
 ```ts
 dayOffset = mod(civilDaysBetween(anchorDate, fecha), cycleLengthDays)
 // mod euclídeo: ((n % m) + m) % m
 ```
 
-Tres correcciones respecto a la versión 1, todas con consecuencias reales:
+Dos precisiones que costaron un error real: con el `%` de JavaScript, cualquier fecha
+anterior al ancla da índice negativo y **ninguna fila coincide** — el horario aparece
+vacío, sin error visible. Y el cálculo se hace sobre **días civiles**, nunca con
+`startOfWeek` (depende del idioma) ni con diferencias entre instantes (se rompen con el
+cambio de hora).
 
-- **Módulo euclídeo.** Con el `%` de JavaScript, cualquier fecha anterior al ancla da un
-  índice negativo y **ninguna** fila coincide: el horario aparece vacío sin error.
-- **Días civiles, no semanas ni instantes.** `startOfWeek` depende del idioma configurado
-  y la diferencia en semanas sobre instantes se rompe con el cambio de hora.
-- **`duration_minutes` en vez de `end_time`.** Un turno de 22:00 a 06:00 con hora de fin
-  es ambiguo y una consulta "del día de hoy" pierde el derrame. El resolvedor consulta el
-  día D **y el D−1**.
+La generación cubre un horizonte de 90 días, es idempotente
+(`UNIQUE(source_ref, local_date, start_time)`) y respeta los bloques marcados
+`is_detached`.
 
-### 7.2 Excepciones
+**2. Importación de malla** — para la carta mensual de turnos. Escribe bloques fechados
+**directamente**, sin patrón intermedio, porque no hay patrón que extraer. Es el camino
+que alimenta la importación por foto (§15.1).
 
-```
-schedule_exceptions(schedule_id, schedule_item_id NULL,
-                    exception_date, type: cancel|move|add,
-                    start_time, duration_minutes)
-```
+**3. Manual** — crear o arrastrar un bloque.
 
-Con `schedule_item_id` nulo, la excepción cubre el día entero: feriado, licencia, viaje.
+### 7.3 Las excepciones dejan de existir como concepto
 
-### 7.3 El "día lógico"
+Cambiar un turno, cancelar una clase o marcar un feriado es **editar o borrar la fila del
+bloque**. Si venía de un patrón, se marca `is_detached` y la regeneración no lo toca. Se
+elimina la tabla `schedule_exceptions` y, con ella, toda una capa de resolución.
+
+Es la consecuencia más útil de haber mirado un horario real: el modelo que aguanta la
+realidad es más simple que el que la anticipaba.
+
+### 7.4 El "día lógico"
 
 `profiles.day_cutoff_hour`, 4:00 por defecto. Sin esto, quien sale del turno a las 22:00 y
 ora a la 01:30 ve que "rompió la racha" — un fallo pequeño que destruye la confianza en un
@@ -303,21 +342,41 @@ Todo registro guarda **`occurred_at timestamptz` y `local_date date` materializa
 escritura**. Calcular el día lógico con una función no sirve: no es inmutable y por tanto
 no se puede indexar.
 
-### 7.4 Disponibilidad
+### 7.5 Disponibilidad
 
 ```ts
-getFreeSlots({ now, timezone, dayWindow, busyBlocks,
+getFreeSlots({ now, timezone, dayWindow, blocks,
                commuteMinutes, bufferMinutes, minSlotMinutes })
 ```
 
-Función pura. Reglas que la hacen creíble:
+Función pura que recibe los bloques ya fechados y solo compara instantes. Reglas que la
+hacen creíble:
 
-- Las duraciones se calculan por **diferencia de instantes** tras convertir a la zona del
-  usuario. Nunca restando horas locales: hay días de 23 y de 25 horas, y en el día en que
-  empieza el horario de verano **las 00:00 no existen**.
 - **Traslados**: un hueco de 30 minutos entre la universidad y el turno no es tiempo útil.
-  Un colchón global es demasiado grosero; el traslado se descuenta por bloque.
+  Un colchón global es demasiado grosero; el traslado se descuenta por bloque según su
+  `kind`.
 - Huecos menores que `minSlotMinutes` (15 por defecto) no se ofrecen.
+- Un bloque con `blocks_availability = false` (por ejemplo, un recordatorio) aparece en la
+  agenda pero no consume tiempo.
+
+### 7.6 La regla de la iglesia, con datos reales
+
+La especificación pide: *"voy a la iglesia los domingos si no trabajo"*. Con la malla real
+de arriba queda claro que **"libre" es insuficiente como condición**:
+
+| Domingo | Turno | Culto 10:30–12:00 | Resultado correcto |
+|---|---|---|---|
+| 16 ago | 11:30–19:30 | se solapa | Conflicto: proponer otro momento |
+| 23 ago | libre | — | ⛪ Iglesia 10:30 |
+| 30 ago | 11:30–16:00 | se solapa | Conflicto: proponer otro momento |
+
+La condición no es "¿hay turno ese día?" sino **"¿algún bloque que consume disponibilidad
+se solapa con la ventana del culto más el traslado?"**. Con el turno empezando a las 11:30
+y el culto terminando a esa misma hora, un modelo por día entero habría dicho "domingo
+ocupado" o "domingo libre" — ambas respuestas equivocadas.
+
+Y cuando hay conflicto, el texto ofrece alternativa sin reproche: *"Este domingo trabajas
+desde las 11:30. ¿Quieres tu momento espiritual antes, a las 9:00?"*
 
 ---
 
@@ -561,7 +620,7 @@ El detalle completo con SQL irá en `DATABASE.md` tras la aprobación. Aquí, la
 estructurales.
 
 **Tablas.** `profiles` · `task_templates` · `tasks` · `task_events` · `task_categories` ·
-`events` · `schedules` · `schedule_items` · `schedule_exceptions` · `schedule_imports` ·
+`time_blocks` · `schedule_patterns` · `schedule_pattern_items` · `schedule_imports` ·
 `schedule_import_items` · `habits` · `habit_logs` · `church_settings` ·
 `financial_accounts` · `transactions` · `financial_categories` · `savings_goals` ·
 `savings_goal_contributions` · `net_worth_snapshots` · `learning_resources` ·
@@ -569,8 +628,9 @@ estructurales.
 `ai_calls` · `push_subscriptions` · `notifications_sent`.
 
 Frente a la lista original: **fuera** `spiritual_activities` y `church_events` (absorbidas
-por los hábitos), y fuera `shared_spaces` / `shared_space_members` / `shared_items`.
-**Dentro**, las que faltaban para que las funciones pedidas fueran calculables.
+por los hábitos), fuera `shared_spaces` / `shared_space_members` / `shared_items`, y fuera
+`events` y `schedule_exceptions`, ambas absorbidas por `time_blocks` (§7). **Dentro**, las
+que faltaban para que las funciones pedidas fueran calculables.
 
 **Decisiones de tipos.**
 
@@ -598,9 +658,9 @@ por los hábitos), y fuera `shared_spaces` / `shared_space_members` / `shared_it
   `auth.users ON DELETE CASCADE` — sin eso no se puede borrar una cuenta. `updated_at` por
   trigger en todas.
 
-**Índices que importan desde el principio:** `tasks(user_id, scheduled_date)` parcial
-sobre pendientes · `tasks(user_id, due_date)` parcial · `habit_logs(habit_id, local_date)`
-único · `schedule_items(schedule_id, day_offset)` ·
+**Índices que importan desde el principio:** `time_blocks(user_id, starts_at)` parcial
+sobre no borrados · `tasks(user_id, scheduled_date)` parcial sobre pendientes ·
+`tasks(user_id, due_date)` parcial · `habit_logs(habit_id, local_date)` único ·
 `transactions(user_id, occurred_on DESC)` · toda clave foránea. Los agregados se hacen por
 rango de fechas, nunca con `date_trunc` sobre la columna, que anula el índice.
 
@@ -641,11 +701,25 @@ El requisito más difícil, y donde conviene ser honesto sobre lo que se puede e
 4. **Dos pasadas independientes.** La confianza que el modelo declara está mal calibrada;
    la señal fuerte es el **acuerdo entre pasadas**. Coinciden → verde. Discrepan → ámbar,
    mostrando ambas opciones como dos botones, lo que convierte "¿está bien?" en "elige".
-5. **Validadores deterministas, sin modelo**: fin posterior al inicio salvo turno
-   nocturno; sin solapes; duración entre 15 minutos y 14 horas; minutos múltiplos de cinco
-   (`1400` → `14:00` es un error típico); número de columnas de la cabecera frente a días
-   emitidos. Los días se resuelven **por posición de columna**, jamás por interpretación
-   semántica de "L M M J V".
+5. **Validadores deterministas, sin modelo**: fin posterior al inicio; sin solapes;
+   duración entre 15 minutos y 14 horas; minutos múltiplos de cinco (`1400` → `14:00` es
+   un error típico); número de columnas de la cabecera frente a días emitidos;
+   **coherencia de fechas dentro del propio documento** y, cuando el total de horas
+   semanales no cuadra con el declarado en el papel, avisar en vez de guardar. Los días se
+   resuelven **por posición de columna**, jamás por interpretación semántica de
+   "L M M J V".
+
+   Estos validadores no son hipotéticos. La primera carta real que se analizó traía el
+   encabezado *"JUNIO 2026"* sobre semanas fechadas en **agosto de 2026**, y las horas
+   sumadas por semana no coincidían con las 45 declaradas en el contrato. Un importador
+   que "arregla" esas discrepancias en silencio destruye la agenda; uno que las marca en
+   ámbar y pregunta, la salva.
+
+   **Dos formatos distintos, no uno.** La rejilla semanal repetible (horario de clases) se
+   convierte en un `schedule_pattern`. La **malla mensual fechada** (la carta de turnos,
+   con "semana del 10 al 16") se convierte en **bloques fechados directos**, sin patrón:
+   intentar inferir un ciclo de una malla arbitraria es inventar. El clasificador de
+   formato es el primer paso, y ante la duda gana el formato fechado, que nunca extrapola.
 6. **Confirmación como calendario semanal**, no como JSON ni formulario. No se puede
    guardar con elementos en rojo; los ámbar se guardan marcados para revisar. **No hay
    botón de "aceptar todo"** mientras haya ámbar. Todo con un identificador de importación
@@ -755,7 +829,7 @@ nativas en móvil.
 
 ## 19. Qué necesito de ti para empezar
 
-1. **Un día real tuyo, hora a hora**, incluyendo un día de turno y un domingo.
+1. **Confirmar la lectura de la carta de turnos** (`AUDITORIA.md` §4.7).
 2. **Confirmar la fusión de fe con hábitos** (§2).
 3. **Tres o cuatro fotos reales de horarios**, para la prueba de viabilidad de la fase 0.
 4. **Aprobar el orden de construcción** (§16) y el alcance del MVP.
