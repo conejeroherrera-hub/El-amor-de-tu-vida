@@ -193,8 +193,10 @@ Lo que muestra el documento:
 | 17–23 ago | 13:00–21:30 | libre | 13:00–21:30 | 13:00–21:30 | 13:00–21:30 | 13:00–21:30 | libre |
 | 24–30 ago | 9:00–16:00 | libre | 9:00–16:00 | 9:00–16:00 | 9:00–16:00 | libre | 11:30–16:00 |
 
-*(Lectura preliminar sujeta a confirmación: los totales por semana no cuadran con las 45
-horas que declara el contrato, así que probablemente falte interpretar una fila.)*
+*(La semana del 10 al 16 suma 36 h en lugar de 45 porque el trabajador **empezó ese
+miércoles**: la lectura era correcta y el descuadre tenía una explicación fuera del
+documento. Es un buen recordatorio de que el importador debe **avisar** de una anomalía,
+nunca corregirla por su cuenta.)*
 
 **Conclusiones:**
 
@@ -250,12 +252,14 @@ Vale la pena registrarlo: son las decisiones que no tienen una respuesta obvia.
 
 ## 6. Lo que sigue pendiente de ti
 
-1. **Confirmar la lectura de la carta de turnos** (§4.7): sobre todo si falta una fila por
-   día y a qué corresponde, porque las horas semanales no cuadran con las 45 del contrato.
-2. **Qué ocupa el resto de tu día**: estudios o clases con su horario, hora de dormir y de
-   levantarte, y cuánto tardas en llegar al trabajo. El turno es solo una parte; el motor
-   necesita saber qué queda alrededor.
+1. **Cuánto tardas en llegar al trabajo** (se asume 45 minutos) y **cuántas horas de sueño
+   quieres como objetivo** (se asumen 8). Son los dos únicos números que el planificador
+   de §7.6 no puede deducir solo.
+2. **En qué quieres avanzar y cuánto al día**: el sistema resuelve el *cuándo*, pero no
+   puede inventar el *qué*. Se asume programación, 45 minutos diarios, como punto de
+   partida corregible.
 3. **Confirmar la fusión de fe con hábitos** (§4.5).
-4. **Una foto de un horario de clases**, si estudias. Es un formato distinto al de la
-   carta de turnos (rejilla repetible frente a malla fechada) y conviene probar los dos.
+4. **El horario de clases cuando llegue** (empiezan el día 6). Es un formato distinto al de
+   la carta de turnos —rejilla repetible frente a malla fechada— y conviene probar los dos
+   antes de construir el importador.
 5. **Aprobar el orden de construcción** de `ARCHITECTURE.md` §16.

@@ -359,7 +359,51 @@ hacen creíble:
 - Un bloque con `blocks_availability = false` (por ejemplo, un recordatorio) aparece en la
   agenda pero no consume tiempo.
 
-### 7.6 La regla de la iglesia, con datos reales
+### 7.6 El día no se declara: se propone
+
+Corrección importante sobre las versiones anteriores, que asumían una **ventana de día
+fija** en el perfil (de 07:00 a 23:00). Con turnos que van de 9:00–16:00 una semana y de
+13:00–21:30 la siguiente, esa ventana no existe: **la hora de dormir depende del turno**.
+
+Y el usuario no quiere declarar su rutina; quiere que la app se la proponga. Eso invierte
+el flujo: en vez de pedir "¿a qué hora duermes y estudias?", el sistema **deriva** esos
+bloques de lo que ya sabe.
+
+**El sueño es un bloque generado**, `kind = 'sleep'`, propuesto cada día y ajustable como
+cualquier otro. Se calcula a partir de restricciones, no de una preferencia horaria:
+
+```
+sleep_target_minutes     -- 480 por defecto
+wind_down_minutes        -- 60: no se propone dormir justo al salir del turno
+morning_prep_minutes     -- 45: despertar, ducha, desayuno
+commute_minutes          -- por bloque, según kind
+sleep_anchor             -- hora habitual, aprendida o declarada
+```
+
+**Regla de estabilidad, no negociable:** la app mantiene la hora de dormir lo más
+constante posible y **solo la desplaza cuando el turno la hace imposible**. Un
+planificador que acuesta al usuario a las 23:00 un día y a la 01:00 al siguiente, pudiendo
+evitarlo, hace daño en vez de ayudar. Cuando el desplazamiento es inevitable, se dice por
+qué.
+
+**El foco del día se coloca alrededor del turno**, no en una hora fija: antes de un turno
+de tarde, después de uno de mañana. Con la malla real de referencia:
+
+| Día | Turno | Foco de 45 min | Dormir |
+|---|---|---|---|
+| Lunes 17 | 13:00–21:30 | 08:00 (antes) | 23:30 |
+| Miércoles 26 | 9:00–16:00 | 17:00 (después) | 23:00 |
+
+Esto es deterministico y no necesita un modelo de lenguaje: son restricciones de
+colocación sobre los huecos que devuelve `getFreeSlots` (§7.5), con el sueño como bloque
+de máxima prioridad.
+
+**Lo que el usuario sí tiene que aportar** es *qué* le importa, no *cuándo*: en qué quiere
+avanzar, cuánto al día y con qué prioridad. El "cuándo" lo resuelve el sistema. Es la
+aplicación directa de R4: la app pide lo que el usuario sabe responder sin esfuerzo, y
+calcula el resto.
+
+### 7.7 La regla de la iglesia, con datos reales
 
 La especificación pide: *"voy a la iglesia los domingos si no trabajo"*. Con la malla real
 de arriba queda claro que **"libre" es insuficiente como condición**:
@@ -759,7 +803,7 @@ empezar el siguiente.** Es la única defensa contra construir diez módulos que 
 | **0** | Migraciones, RLS con test en CI, auth, perfil, sistema de diseño, PWA instalable con service worker | 1–2 sem |
 | **1** | `core/time` y `availability`; horarios rotativos manuales; agenda día y semana | 2–4 sem |
 | **2** | Tareas: plantillas, instancias, postergación, `task_events` | 2 sem |
-| **3** | **Motor de prioridad + `/hoy` + `/ahora`.** ← *aquí el producto existe: úsalo dos semanas antes de seguir* | 1–2 sem |
+| **3** | **Motor de prioridad + planificador de sueño y foco (§7.6) + `/hoy` + `/ahora`.** ← *aquí el producto existe: úsalo dos semanas antes de seguir* | 2–3 sem |
 | **4** | Notificaciones (Web Push, pg_cron, ajustes de tono) | 1 sem |
 | **5** | Hábitos y fe, con la regla condicional de iglesia | 1–2 sem |
 | **6** | Finanzas y ahorros | 1–2 sem |
